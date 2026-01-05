@@ -78,9 +78,9 @@ class RotaryPositionalEmbedding(torch.nn.Module):
         ### TODO: Your code starts here ###
         batch, num_heads, seq_len, head_dim = x.shape
         x_reshaped = x.reshape([batch, num_heads, seq_len, 2, head_dim//2])
-        
-        cos = self.cos_cache[start_pos:start_pos+seq_len]
-        sin = self.sin_cache[start_pos:start_pos+seq_len]
+
+        cos = self.cos_cache[start_pos:start_pos+seq_len].to(x.device)
+        sin = self.sin_cache[start_pos:start_pos+seq_len].to(x.device)
 
         x1 = x_reshaped[..., 0]
         x2 = x_reshaped[..., 1]
