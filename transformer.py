@@ -78,9 +78,9 @@ class RotaryPositionalEmbedding(torch.nn.Module):
         ### TODO: Your code starts here ###
         batch, num_heads, seq_len, head_dim = x.shape
         x_reshaped = x.reshape([batch, num_heads, seq_len, 2, head_dim//2])
-        
-        cos = self.cos_cache[start_pos:start_pos+seq_len]
-        sin = self.sin_cache[start_pos:start_pos+seq_len]
+
+        cos = self.cos_cache[start_pos:start_pos+seq_len].to(x.device)
+        sin = self.sin_cache[start_pos:start_pos+seq_len].to(x.device)
 
         x1 = x_reshaped[..., 0]
         x2 = x_reshaped[..., 1]
@@ -240,6 +240,7 @@ class GroupedQueryAttention(torch.nn.Module):
         self.layer_W_q = torch.nn.Linear(hidden_dim, num_heads * head_dim)
         self.layer_W_k = torch.nn.Linear(hidden_dim, num_kv_heads * head_dim)
         self.layer_W_v = torch.nn.Linear(hidden_dim, num_kv_heads * head_dim)
+        self.layer_W_o = torch.nn.Linear(num_heads * head_dim, hidden_dim)
         self.key_weights = torch.nn.Parameter(torch.ones(num_heads))
         self.rope = RotaryPositionalEmbedding(head_dim)
         ### TODO: Your code ends here ###
@@ -256,18 +257,31 @@ class GroupedQueryAttention(torch.nn.Module):
         batch, seq_len, _ = x.shape
 
         ### TODO: Your code starts here ###
+        # Apply linear projections
         q = self.layer_W_q(x)
         k = self.layer_W_k(x)
         v = self.layer_W_v(x)
-        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu") # ???
-        attention = calculate_attention(
+
+        # Reshape to [batch, seq_len, num_heads, head_dim] then transpose to [batch, num_heads, seq_len, head_dim]
+        q = q.view(batch, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
+        k = k.view(batch, seq_len, self.num_kv_heads, self.head_dim).transpose(1, 2)
+        v = v.view(batch, seq_len, self.num_kv_heads, self.head_dim).transpose(1, 2)
+
+        # Calculate attention
+        attention_output = calculate_attention(
             q,
             k,
             v,
             self.key_weights,
             self.rope,
             self.scale,
-            device)
+            x.device)
+
+        # Reshape back to [batch, seq_len, num_heads * head_dim]
+        attention_output = attention_output.transpose(1, 2).reshape(batch, seq_len, self.num_heads * self.head_dim)
+
+        # Apply output projection
+        output = self.layer_W_o(attention_output)
         ### TODO: Your code ends here ###
 
         return output
