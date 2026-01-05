@@ -363,10 +363,11 @@ def test_calculate_attention() -> None:
     wrong_positions = torch.where(diff > 1e-4)
     print("Positions with large error:")
     print(wrong_positions)
-    print("\nValues at first wrong position:")
-    idx = (wrong_positions[0][0], wrong_positions[1][0], wrong_positions[2][0], wrong_positions[3][0])
-    print(f"Actual: {output[idx]}")
-    print(f"Expected: {expected[idx]}")
+    if len(wrong_positions[0]) > 0:
+        print("\nValues at first wrong position:")
+        idx = (wrong_positions[0][0], wrong_positions[1][0], wrong_positions[2][0], wrong_positions[3][0])
+        print(f"Actual: {output[idx]}")
+        print(f"Expected: {expected[idx]}")
 
     assert torch.allclose(output, expected, atol=1e-4), \
         f"calculate_attention output values mismatch"
@@ -399,10 +400,9 @@ def calculate_sliding_attention(
         Output tensor of shape [batch, num_heads, seq_len, head_dim].
     """
     ### TODO: Your code starts here ###
-    SLIDING_DISTANCE = 128
     sliding_window_mask = torch.tril(
         torch.ones(q.shape[-2], q.shape[-2], device=device)) * \
-        torch.triu(torch.ones(q.shape[-2], q.shape[-2], device=device), diagonal=-SLIDING_DISTANCE)
+        torch.triu(torch.ones(q.shape[-2], q.shape[-2], device=device), diagonal=-window_size)
     sliding_window_mask = sliding_window_mask.view(1, 1, q.shape[-2], q.shape[-2])
     
     output = calculate_attention(
@@ -474,18 +474,18 @@ class SWAttention(torch.nn.Module):
         k = k.view(batch, seq_len, self.num_kv_heads, self.head_dim).transpose(1, 2)
         v = v.view(batch, seq_len, self.num_kv_heads, self.head_dim).transpose(1, 2)
 
-        attention = calculate_sliding_attention(
+        attention_output = calculate_sliding_attention(
             q,
             k,
             v,
             self.key_weights,
             self.rope,
             self.scale,
-            x.device)
+            x.device,
+            self.window_size)
         attention_output = attention_output.transpose(1, 2).reshape(batch, seq_len, self.num_heads * self.head_dim)
-        output = self.layer_W_o(attention_output)
         ### TODO: Your code ends here ###
-        return output
+        return attention_output
 
 
 ##### TESTS START #####
