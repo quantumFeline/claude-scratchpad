@@ -81,7 +81,6 @@ class RotaryPositionalEmbedding(torch.nn.Module):
         cos = self.cos_cache[start_pos:start_pos+seq_len].to(x.device)
         sin = self.sin_cache[start_pos:start_pos+seq_len].to(x.device)
 
-        # Split into first half and second half
         x1 = x[..., :head_dim//2]
         x2 = x[..., head_dim//2:]
 
@@ -165,12 +164,12 @@ def calculate_attention(
         Output tensor of shape [batch, num_heads, seq_len, head_dim].
     """
     ### TODO: Your code starts here ###
-    print(f"q device: {q.device}")
-    print(f"rope.cos_cache device: {rope.cos_cache.device}")
-    print(f"rope.sin_cache device: {rope.sin_cache.device}")
+    # print(f"q device: {q.device}")
+    # print(f"rope.cos_cache device: {rope.cos_cache.device}")
+    # print(f"rope.sin_cache device: {rope.sin_cache.device}")
     batch, num_heads, seq_len, head_dim = q.shape
     _, num_kv_heads, _, _ = k.shape
-    print(q.shape, k.shape, v.shape)
+    # print(q.shape, k.shape, v.shape)
     n_groups = num_heads // num_kv_heads
 
 
@@ -180,9 +179,9 @@ def calculate_attention(
     q_rope = rope(q)
     k_rope = rope(k_expanded) * key_weights.view(1, num_heads, 1, 1)
 
-    print(k_rope.shape)
-    print(k_rope.transpose(-2, -1).shape)
-    print(q_rope.shape)
+    # print(k_rope.shape)
+    # print(k_rope.transpose(-2, -1).shape)
+    # print(q_rope.shape)
     attention = (q_rope @ k_rope.transpose(-2, -1)) * scale
 
     if mask is None:
@@ -193,17 +192,17 @@ def calculate_attention(
     attention = attention.masked_fill(mask == 0, float('-inf'))
 
 
-    print("Attention scores [0,0]:")
-    print(attention[0, 0])
-    print("Expected pattern should be lower triangular after masking")
+    # print("Attention scores [0,0]:")
+    # print(attention[0, 0])
+    # print("Expected pattern should be lower triangular after masking")
 
     a_softmaxed = F.softmax(attention, dim=-1)
 
-    print("Softmax weights [0,0]:")
-    print(a_softmaxed[0, 0])
+    # print("Softmax weights [0,0]:")
+    # print(a_softmaxed[0, 0])
 
     output = a_softmaxed @ v_expanded
-    
+
     # output_transposed = output.transpose(1, 2) Not yet
     # output_reshaped = output_transposed.reshape(batch, seq_len, num_heads * head_dim)
     ### TODO: Your code ends here ###
@@ -238,8 +237,8 @@ class GroupedQueryAttention(torch.nn.Module):
 
         ### TODO: Your code starts here ###
         self.layer_W_q = torch.nn.Linear(hidden_dim, num_heads * head_dim)
-        self.layer_W_k = torch.nn.Linear(hidden_dim, num_kv_heads * head_dim)
-        self.layer_W_v = torch.nn.Linear(hidden_dim, num_kv_heads * head_dim)
+        self.layer_W_k = torch.nn.Linear(hidden_dim, self.num_kv_heads * head_dim)
+        self.layer_W_v = torch.nn.Linear(hidden_dim, self.num_kv_heads * head_dim)
         self.layer_W_o = torch.nn.Linear(num_heads * head_dim, hidden_dim)
         self.key_weights = torch.nn.Parameter(torch.ones(num_heads))
         self.rope = RotaryPositionalEmbedding(head_dim)
@@ -257,18 +256,15 @@ class GroupedQueryAttention(torch.nn.Module):
         batch, seq_len, _ = x.shape
 
         ### TODO: Your code starts here ###
-        # Apply linear projections
         q = self.layer_W_q(x)
         k = self.layer_W_k(x)
         v = self.layer_W_v(x)
 
-        # Reshape to [batch, seq_len, num_heads, head_dim] then transpose to [batch, num_heads, seq_len, head_dim]
         q = q.view(batch, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
         k = k.view(batch, seq_len, self.num_kv_heads, self.head_dim).transpose(1, 2)
         v = v.view(batch, seq_len, self.num_kv_heads, self.head_dim).transpose(1, 2)
 
-        # Calculate attention
-        attention_output = calculate_attention(
+        attention = calculate_attention(
             q,
             k,
             v,
@@ -276,11 +272,7 @@ class GroupedQueryAttention(torch.nn.Module):
             self.rope,
             self.scale,
             x.device)
-
-        # Reshape back to [batch, seq_len, num_heads * head_dim]
-        attention_output = attention_output.transpose(1, 2).reshape(batch, seq_len, self.num_heads * self.head_dim)
-
-        # Apply output projection
+        attention_output = attention.transpose(1, 2).reshape(batch, seq_len, self.num_heads * self.head_dim)
         output = self.layer_W_o(attention_output)
         ### TODO: Your code ends here ###
 
@@ -351,22 +343,19 @@ def test_calculate_attention() -> None:
           [ 0.8761, -0.5560,  0.6310,  0.6123]]]]
     )
 
-    print("Actual output [0,0,0]:")
-    print(output[0, 0, 0])
-    print("Expected output [0,0,0]:")
-    print(expected[0, 0, 0])
-    print("Difference:")
-    print(output[0, 0, 0] - expected[0, 0, 0])
-    print("Max absolute difference:")
-    print(torch.max(torch.abs(output - expected)))
-    diff = torch.abs(output - expected)
-    wrong_positions = torch.where(diff > 1e-4)
-    print("Positions with large error:")
-    print(wrong_positions)
-    print("\nValues at first wrong position:")
-    idx = (wrong_positions[0][0], wrong_positions[1][0], wrong_positions[2][0], wrong_positions[3][0])
-    print(f"Actual: {output[idx]}")
-    print(f"Expected: {expected[idx]}")
+    # DEBUG
+    # print("Actual output [0,0,0]:")
+    # print(output[0, 0, 0])
+    # print("Expected output [0,0,0]:")
+    # print(expected[0, 0, 0])
+    # print("Difference:")
+    # print(output[0, 0, 0] - expected[0, 0, 0])
+    # print("Max absolute difference:")
+    # print(torch.max(torch.abs(output - expected)))
+    # diff = torch.abs(output - expected)
+    # wrong_positions = torch.where(diff > 1e-4)
+    # print("Positions with large error:")
+    # print(wrong_positions)
 
     assert torch.allclose(output, expected, atol=1e-4), \
         f"calculate_attention output values mismatch"
@@ -399,12 +388,11 @@ def calculate_sliding_attention(
         Output tensor of shape [batch, num_heads, seq_len, head_dim].
     """
     ### TODO: Your code starts here ###
-    SLIDING_DISTANCE = 128
     sliding_window_mask = torch.tril(
         torch.ones(q.shape[-2], q.shape[-2], device=device)) * \
-        torch.triu(torch.ones(q.shape[-2], q.shape[-2], device=device), diagonal=-SLIDING_DISTANCE)
+        torch.triu(torch.ones(q.shape[-2], q.shape[-2], device=device), diagonal=-window_size)
     sliding_window_mask = sliding_window_mask.view(1, 1, q.shape[-2], q.shape[-2])
-    
+
     output = calculate_attention(
         q,
         k,
@@ -446,9 +434,11 @@ class SWAttention(torch.nn.Module):
 
         ### TODO: Your code starts here ###
         self.num_kv_heads = num_heads
+        
         self.layer_W_q = torch.nn.Linear(hidden_dim, num_heads * head_dim)
         self.layer_W_k = torch.nn.Linear(hidden_dim, self.num_kv_heads * head_dim)
         self.layer_W_v = torch.nn.Linear(hidden_dim, self.num_kv_heads * head_dim)
+        self.layer_W_o = torch.nn.Linear(num_heads * head_dim, hidden_dim)
         self.key_weights = torch.nn.Parameter(torch.ones(num_heads))
         self.rope = RotaryPositionalEmbedding(head_dim)
 
@@ -469,7 +459,7 @@ class SWAttention(torch.nn.Module):
         q = self.layer_W_q(x)
         k = self.layer_W_k(x)
         v = self.layer_W_v(x)
-        
+
         q = q.view(batch, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
         k = k.view(batch, seq_len, self.num_kv_heads, self.head_dim).transpose(1, 2)
         v = v.view(batch, seq_len, self.num_kv_heads, self.head_dim).transpose(1, 2)
@@ -481,8 +471,9 @@ class SWAttention(torch.nn.Module):
             self.key_weights,
             self.rope,
             self.scale,
-            x.device)
-        attention_output = attention_output.transpose(1, 2).reshape(batch, seq_len, self.num_heads * self.head_dim)
+            x.device,
+            self.window_size)
+        attention_output = attention.transpose(1, 2).reshape(batch, seq_len, self.num_heads * self.head_dim)
         output = self.layer_W_o(attention_output)
         ### TODO: Your code ends here ###
         return output
@@ -560,41 +551,6 @@ def test_calculate_sliding_attention() -> None:
 test_calculate_sliding_attention()
 
 #####  TESTS END  #####
-
-class Router(torch.nn.Module):
-    def __init__(self, hidden_dim: int, num_experts: int, top_k: int = 2) -> None:
-        """
-        Args:
-            hidden_dim: Input dimension.
-            num_experts: Total number of experts.
-            top_k: Number of experts to activate per token.
-        """
-        super().__init__()
-
-        self.hidden_dim = hidden_dim
-        self.num_experts = num_experts
-        self.top_k = top_k
-
-        ### TODO: Your code starts here ###
-
-        ### TODO: Your code ends here ###
-
-    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        """
-        Args:
-            x: Input tensor of shape [batch, seq_len, hidden_dim].
-
-        Returns:
-            routing_weights: Tensor of shape [batch, seq_len, top_k] with softmax weights.
-            expert_indices: Tensor of shape [batch, seq_len, top_k] with selected expert indices.
-        """
-        assert len(x.shape) == 3
-        ### TODO: Your code starts here ###
-
-        ### TODO: Your code ends here ###
-
-        return routing_weights, expert_indices
-
 
 class Router(torch.nn.Module):
     def __init__(self, hidden_dim: int, num_experts: int, top_k: int = 2) -> None:
@@ -737,14 +693,14 @@ class TransformerBlock(torch.nn.Module):
         ### TODO: Your code starts here ###
         self.rms_norm_1 = RMSNorm(hidden_dim)
         if use_sliding_window:
-            self.group_query_attention = SWAttention(hidden_dim, num_heads, head_dim, window_size)
+            self.attention = SWAttention(hidden_dim, num_heads, head_dim, window_size)
         else:
-            self.group_query_attention = GroupedQueryAttention(hidden_dim, num_heads, head_dim, num_kv_heads)
+            self.attention = GroupedQueryAttention(hidden_dim, num_heads, head_dim, num_kv_heads)
         self.rms_norm_2 = RMSNorm(hidden_dim)
         if use_moe:
-            self.experts = MixtureOfExperts(hidden_dim, ff_dim, num_experts, top_k)
+            self.ffn = MixtureOfExperts(hidden_dim, ff_dim, num_experts, top_k)
         else:
-            self.experts = SwiGLUFeedForward(hidden_dim, ff_dim)
+            self.ffn = SwiGLUFeedForward(hidden_dim, ff_dim)
         ### TODO: Your code ends here ###
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -756,12 +712,418 @@ class TransformerBlock(torch.nn.Module):
             Output tensor of shape [batch, seq_len, hidden_dim].
         """
         ### TODO: Your code starts here ###
-        x_attention = self.group_query_attention(self.rms_norm_1(x))
+        x_attention = self.attention(self.rms_norm_1(x))
         x_attention += x
-        x_ffn = self.experts(self.rms_norm_2(x_attention))
+        x_ffn = self.ffn(self.rms_norm_2(x_attention))
         x_ffn += x_attention
         result = x_ffn
         ### TODO: Your code ends here ###
 
         assert x.shape == result.shape
         return result
+
+from torch.nn import Embedding
+
+class Transformer(torch.nn.Module):
+    def __init__(
+        self,
+        vocab_size: int,
+        n_layers: int,
+        hidden_dim: int,
+        ff_dim: int,
+        num_heads: int,
+        head_dim: int,
+        use_sliding_window_alternating: bool = False,
+        window_size: int = 128,
+        use_moe: bool = False,
+        num_experts: int = 8,
+        top_k: int = 2,
+        num_kv_heads: Optional[int] = None
+    ) -> None:
+        """
+        Args:
+            vocab_size: Size of the vocabulary.
+            n_layers: Number of transformer layers.
+            hidden_dim: Hidden dimension.
+            ff_dim: Feed-forward inner dimension.
+            num_heads: Number of attention heads.
+            head_dim: Dimension per attention head.
+            use_sliding_window_alternating: Use sliding window on every other layer
+            window_size: Size of sliding window.
+            use_moe: Whether to use Mixture of Experts.
+            num_experts: Number of experts (if MoE).
+            top_k: Number of experts per token (if MoE).
+            num_kv_heads: Number of KV heads for GQA.
+        """
+        super().__init__()
+
+        self.vocab_size = vocab_size
+        self.n_layers = n_layers
+        self.hidden_dim = hidden_dim
+        self.ff_dim = ff_dim
+        self.num_heads = num_heads
+        self.head_dim = head_dim
+
+        ### TODO: Your code starts here ###
+        self.embedding = Embedding(vocab_size, hidden_dim)
+        self.layers = []
+        use_sliding_window = False
+
+        for i in range(n_layers):
+
+            if use_sliding_window_alternating and i % 2 == 1:
+                use_sliding_window = True
+            if use_sliding_window_alternating and i % 2 == 0:
+                use_sliding_window = False
+              
+            self.layers.append(
+                TransformerBlock(
+                    hidden_dim,
+                    ff_dim,
+                    num_heads,
+                    head_dim,
+                    use_sliding_window,
+                    window_size,
+                    use_moe,
+                    num_experts,
+                    top_k,
+                    num_kv_heads
+                    )
+                )
+        self.final_norm = RMSNorm(hidden_dim)
+        self.output_proj = torch.nn.Linear(hidden_dim, vocab_size)
+        ### TODO: Your code ends here ###
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            x: Token indices of shape [batch, seq_len].
+
+        Returns:
+            Logits of shape [batch, seq_len, vocab_size].
+        """
+        assert len(x.shape) == 2, f"Expected 2D input, got shape {x.shape}"
+
+        ### TODO: Your code starts here ###
+        x = self.embedding(x)
+        for block in self.layers:
+            x = block(x)
+        x = self.final_norm(x)
+        x = self.output_proj(x)
+        logits = x
+        ### TODO: Your code ends here ###
+
+        return logits
+
+
+##### TESTS START #####
+
+@torch.no_grad()
+def test_transformer() -> None:
+    torch.manual_seed(42)
+    batch, seq_len = 2, 8
+    vocab_size, n_layers, hidden_dim = 100, 2, 32
+    ff_dim, num_heads, head_dim = 64, 4, 8
+
+    model = Transformer(
+        vocab_size=vocab_size,
+        n_layers=n_layers,
+        hidden_dim=hidden_dim,
+        ff_dim=ff_dim,
+        num_heads=num_heads,
+        head_dim=head_dim
+    )
+
+    x = torch.randint(0, vocab_size, (batch, seq_len))
+    output = model(x)
+
+    # Test output shape
+    assert output.shape == (batch, seq_len, vocab_size), f"Wrong shape: {output.shape}"
+
+    # Test that model has correct number of layers
+    assert len(model.layers) == n_layers, f"Model should have {n_layers} layers"
+
+    # Test that model has embedding and output projection
+    assert hasattr(model, 'embedding'), "Model should have embedding layer"
+    assert hasattr(model, 'output_proj'), "Model should have output projection"
+    assert isinstance(model.embedding, torch.nn.Embedding), "embedding should be nn.Embedding"
+
+    # Test that model has final normalization
+    assert hasattr(model, 'final_norm'), "Model should have final_norm"
+    assert isinstance(model.final_norm, torch.nn.RMSNorm), "final_norm should be RMSNorm"
+
+    # Test embedding size
+    assert model.embedding.num_embeddings == vocab_size, \
+        f"Embedding should have {vocab_size} tokens"
+    assert model.embedding.embedding_dim == hidden_dim, \
+        f"Embedding dimension should be {hidden_dim}"
+
+    # Test output projection size
+    assert model.output_proj.out_features == vocab_size, \
+        f"Output projection should project to {vocab_size} dimensions"
+
+    # Test with sliding window alternating
+    model_sw = Transformer(
+        vocab_size=vocab_size,
+        n_layers=4,
+        hidden_dim=hidden_dim,
+        ff_dim=ff_dim,
+        num_heads=num_heads,
+        head_dim=head_dim,
+        use_sliding_window_alternating=True,
+        window_size=4
+    )
+    output_sw = model_sw(x)
+    assert output_sw.shape == (batch, seq_len, vocab_size)
+
+    # Check that alternating layers use sliding window
+    assert isinstance(model_sw.layers[1].attention, SWAttention), \
+        "Layer 1 should use SWAttention (alternating pattern)"
+    assert isinstance(model_sw.layers[3].attention, SWAttention), \
+        "Layer 3 should use SWAttention (alternating pattern)"
+    assert isinstance(model_sw.layers[0].attention, GroupedQueryAttention), \
+        "Layer 0 should use GQA (not sliding window)"
+
+    # Test with MoE
+    model_moe = Transformer(
+        vocab_size=vocab_size,
+        n_layers=2,
+        hidden_dim=hidden_dim,
+        ff_dim=ff_dim,
+        num_heads=num_heads,
+        head_dim=head_dim,
+        use_moe=True,
+        num_experts=4,
+        top_k=2
+    )
+    output_moe = model_moe(x)
+    assert output_moe.shape == (batch, seq_len, vocab_size)
+    assert isinstance(model_moe.layers[0].ffn, MixtureOfExperts), \
+        "All layers should use MoE when use_moe=True"
+
+    # Test with GQA
+    model_gqa = Transformer(
+        vocab_size=vocab_size,
+        n_layers=2,
+        hidden_dim=hidden_dim,
+        ff_dim=ff_dim,
+        num_heads=num_heads,
+        head_dim=head_dim,
+        num_kv_heads=2
+    )
+    output_gqa = model_gqa(x)
+    assert output_gqa.shape == (batch, seq_len, vocab_size)
+
+    # Test determinism
+    torch.manual_seed(42)
+    model2 = Transformer(
+        vocab_size=vocab_size,
+        n_layers=n_layers,
+        hidden_dim=hidden_dim,
+        ff_dim=ff_dim,
+        num_heads=num_heads,
+        head_dim=head_dim
+    )
+    x2 = torch.randint(0, vocab_size, (batch, seq_len))
+    output2 = model2(x2)
+    assert torch.allclose(output, output2, atol=1e-5), "Transformer should be deterministic"
+
+    # Test that logits are different for different inputs
+    x_different = torch.randint(0, vocab_size, (batch, seq_len))
+    output_different = model(x_different)
+    assert not torch.allclose(output, output_different), \
+        "Different inputs should produce different outputs"
+
+
+test_transformer()
+
+#####  TESTS END  #####
+
+#[do not modify]
+
+import numpy as np
+
+def generate_recursive(n_first, vocab_size, next_prob):
+    assert 0 < vocab_size
+    initial = np.random.randint(0, vocab_size, n_first)
+    coeffs = np.random.randint(0, vocab_size, n_first)
+
+    return initial, coeffs, vocab_size, next_prob
+
+class SeqGen:
+    """
+    For generating recurrent sequences with stochastically repeating terms.
+    """
+    def __init__(self, initial, coeffs, size, next_prob):
+        assert len(coeffs) == len(initial)
+        self.initial = initial
+        self.coeffs = coeffs
+        self.size = size
+        self.next_prob = next_prob
+
+        self.current = initial
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        if np.random.random() < self.next_prob:
+          new = self.current[-1] + 1
+        else:
+          new = (self.current @ self.coeffs)
+
+        new %= self.size
+        self.current = np.append(self.current, new)[1:]
+
+        return new
+
+    def __key(self):
+        return (tuple(self.initial), tuple(self.coeffs), self.size, self.next_prob)
+
+    def __hash__(self):
+        return hash(self.__key())
+
+    def __eq__(self, other):
+        if isinstance(other, SeqGen):
+            return self.__key() == other.__key()
+
+
+def generate_dataset(gen_factory, seq_len, num_entries, exclude = []):
+    """
+    For generating datasets with num_entries elements each
+    of length seq_len.
+
+      gen_factory is a procedure that returns
+        instance of SeqGen when called.
+
+      seq_len is the length of the sequence to generate.
+
+      num_entries is the number of sequences to generate.
+
+      exclude is the set of sequences that aren't to be used in training
+    """
+    entries = []
+    generators = []
+    for e in range(num_entries):
+        while True:
+          seq_gen = gen_factory()
+          if seq_gen in exclude:
+              continue
+
+          seq = []
+          for s in range(seq_len + 1):
+              seq.append(next(seq_gen))
+
+          break
+
+        generators.append(seq_gen)
+        entries.append(seq)
+    data = torch.tensor(entries, dtype=torch.long)
+    x = data[:, :seq_len]
+    y = data[:, 1:]       # we predict next token
+    return torch.utils.data.TensorDataset(x, y), set(generators)
+
+#[do not modify]
+
+def example_generator(gen):
+    """
+      A procedure that returns a representation of
+      a single data entrance.
+    """
+    def example_gen():
+        return SeqGen(*gen())
+    return example_gen
+
+#[do not modify]
+
+BATCH_SIZE = 128
+SEQ_LEN = 64
+
+
+VOCAB_SIZE = 7
+NEXT_PROB = .1
+INITIAL = 2
+
+
+DEVICE = torch.device("cpu") # can be also cpu
+PERM_EXAMPLE_GENERATOR = example_generator(lambda: generate_recursive(INITIAL, VOCAB_SIZE, NEXT_PROB))
+
+
+TEST_DATASET, generators = generate_dataset(
+    gen_factory=PERM_EXAMPLE_GENERATOR, seq_len=SEQ_LEN, num_entries=1000)
+TRAIN_DATASET, _ = generate_dataset(
+    gen_factory=PERM_EXAMPLE_GENERATOR, seq_len=SEQ_LEN, num_entries=10000, exclude=generators)
+
+
+TRAIN_LOADER = torch.utils.data.DataLoader(
+    TRAIN_DATASET, batch_size=BATCH_SIZE)
+TEST_LOADER = torch.utils.data.DataLoader(TEST_DATASET, batch_size=BATCH_SIZE)
+
+from tqdm import tqdm
+import functools
+
+@torch.no_grad
+def eval_acc(model: torch.nn.Module, dataloader: torch.utils.data.DataLoader):
+    model.eval()
+    sum_acc = 0
+    num_examples = 0
+    for x, y in dataloader:
+        x, y = x.to(DEVICE), y.to(DEVICE)
+        model_out = model(x)
+
+        acc = (torch.argmax(model_out, dim=-1) == y).to(torch.float32).sum()
+        sum_acc += acc
+        num_examples += model_out.shape[0] * model_out.shape[1]
+
+    return sum_acc / num_examples
+
+
+def eval_fn(step, model, dataloader):
+    acc = eval_acc(model, dataloader)
+    print(f"{step}: Avg eval accuracy {acc}")
+
+
+def train(
+    model: torch.nn.Module,
+    optimizer: torch.optim.Optimizer,
+    dataloader: torch.utils.data.DataLoader,
+    eval_fn: functools.partial,
+    num_epochs: int
+):
+    model.train()
+
+    for epoch in range(num_epochs):
+        if epoch == 0:
+            eval_fn(epoch, model)
+
+        model.train()
+        total_loss = 0.0
+        num_batches = 0
+        for i, (x, y) in tqdm(enumerate(dataloader)):
+            ### TODO: Your code starts here ###
+            x, y = x.to(DEVICE), y.to(DEVICE)
+            optimizer.zero_grad()
+            output = model(x)
+            loss = torch.nn.functional.cross_entropy(output.reshape(-1, output.shape[-1]), y.reshape(-1))
+            loss.backward()
+            optimizer.step()
+            ### TODO: Your code ends here ###
+
+        eval_fn(epoch, model)
+
+
+model = Transformer(
+    vocab_size=VOCAB_SIZE, n_layers=4, hidden_dim=64, ff_dim=128, num_heads=4, head_dim=16
+)
+model.to(DEVICE)
+optimizer = torch.optim.AdamW(model.parameters(), lr=0.01)
+train(
+    model=model,
+    optimizer=optimizer,
+    dataloader=TRAIN_LOADER,
+    eval_fn=functools.partial(
+        eval_fn,
+        dataloader=TEST_LOADER,
+    ),
+    num_epochs=8
+)
