@@ -165,14 +165,9 @@ def calculate_attention(
         Output tensor of shape [batch, num_heads, seq_len, head_dim].
     """
     ### TODO: Your code starts here ###
-    print(f"q device: {q.device}")
-    print(f"rope.cos_cache device: {rope.cos_cache.device}")
-    print(f"rope.sin_cache device: {rope.sin_cache.device}")
     batch, num_heads, seq_len, head_dim = q.shape
     _, num_kv_heads, _, _ = k.shape
-    print(q.shape, k.shape, v.shape)
     n_groups = num_heads // num_kv_heads
-
 
     k_expanded = torch.repeat_interleave(k, n_groups, dim=1)
     v_expanded = torch.repeat_interleave(v, n_groups, dim=1)
@@ -180,9 +175,6 @@ def calculate_attention(
     q_rope = rope(q)
     k_rope = rope(k_expanded) * key_weights.view(1, num_heads, 1, 1)
 
-    print(k_rope.shape)
-    print(k_rope.transpose(-2, -1).shape)
-    print(q_rope.shape)
     attention = (q_rope @ k_rope.transpose(-2, -1)) * scale
 
     if mask is None:
@@ -192,20 +184,9 @@ def calculate_attention(
             .to(device)
     attention = attention.masked_fill(mask == 0, float('-inf'))
 
-
-    print("Attention scores [0,0]:")
-    print(attention[0, 0])
-    print("Expected pattern should be lower triangular after masking")
-
     a_softmaxed = F.softmax(attention, dim=-1)
 
-    print("Softmax weights [0,0]:")
-    print(a_softmaxed[0, 0])
-
     output = a_softmaxed @ v_expanded
-    
-    # output_transposed = output.transpose(1, 2) Not yet
-    # output_reshaped = output_transposed.reshape(batch, seq_len, num_heads * head_dim)
     ### TODO: Your code ends here ###
     return output
 
@@ -404,7 +385,7 @@ def calculate_sliding_attention(
         torch.ones(q.shape[-2], q.shape[-2], device=device)) * \
         torch.triu(torch.ones(q.shape[-2], q.shape[-2], device=device), diagonal=-window_size)
     sliding_window_mask = sliding_window_mask.view(1, 1, q.shape[-2], q.shape[-2])
-    
+
     output = calculate_attention(
         q,
         k,
@@ -449,6 +430,7 @@ class SWAttention(torch.nn.Module):
         self.layer_W_q = torch.nn.Linear(hidden_dim, num_heads * head_dim)
         self.layer_W_k = torch.nn.Linear(hidden_dim, self.num_kv_heads * head_dim)
         self.layer_W_v = torch.nn.Linear(hidden_dim, self.num_kv_heads * head_dim)
+        self.layer_W_o = torch.nn.Linear(num_heads * head_dim, hidden_dim)
         self.key_weights = torch.nn.Parameter(torch.ones(num_heads))
         self.rope = RotaryPositionalEmbedding(head_dim)
 
@@ -469,7 +451,7 @@ class SWAttention(torch.nn.Module):
         q = self.layer_W_q(x)
         k = self.layer_W_k(x)
         v = self.layer_W_v(x)
-        
+
         q = q.view(batch, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
         k = k.view(batch, seq_len, self.num_kv_heads, self.head_dim).transpose(1, 2)
         v = v.view(batch, seq_len, self.num_kv_heads, self.head_dim).transpose(1, 2)
@@ -484,8 +466,9 @@ class SWAttention(torch.nn.Module):
             x.device,
             self.window_size)
         attention_output = attention_output.transpose(1, 2).reshape(batch, seq_len, self.num_heads * self.head_dim)
+        output = self.layer_W_o(attention_output)
         ### TODO: Your code ends here ###
-        return attention_output
+        return output
 
 
 ##### TESTS START #####
@@ -640,7 +623,7 @@ class MixtureOfExperts(torch.nn.Module):
         batch, seq_len, hidden_dim = x.shape
 
         ### TODO: Your code starts here ###
-        expert_indices, routing_weights = self.router(x)
+        routing_weights, expert_indices = self.router(x)
 
         x_flat = x.view(batch * seq_len, hidden_dim)
         expert_indices_flat = expert_indices.view(batch * seq_len, self.top_k)
@@ -650,7 +633,7 @@ class MixtureOfExperts(torch.nn.Module):
         for expert_id in range(self.num_experts):
             expert_mask = expert_indices_flat == expert_id
             token_idx, slot_idx = expert_mask.nonzero(as_tuple=True)
-            
+
             if len(token_idx) == 0:  # No tokens for this expert
                 continue
 
@@ -702,14 +685,14 @@ class TransformerBlock(torch.nn.Module):
         ### TODO: Your code starts here ###
         self.rms_norm_1 = RMSNorm(hidden_dim)
         if use_sliding_window:
-            self.group_query_attention = SWAttention(hidden_dim, num_heads, head_dim, window_size)
+            self.attention = SWAttention(hidden_dim, num_heads, head_dim, window_size)
         else:
-            self.group_query_attention = GroupedQueryAttention(hidden_dim, num_heads, head_dim, num_kv_heads)
+            self.attention = GroupedQueryAttention(hidden_dim, num_heads, head_dim, num_kv_heads)
         self.rms_norm_2 = RMSNorm(hidden_dim)
         if use_moe:
-            self.experts = MixtureOfExperts(hidden_dim, ff_dim, num_experts, top_k)
+            self.ffn = MixtureOfExperts(hidden_dim, ff_dim, num_experts, top_k)
         else:
-            self.experts = SwiGLUFeedForward(hidden_dim, ff_dim)
+            self.ffn = SwiGLUFeedForward(hidden_dim, ff_dim)
         ### TODO: Your code ends here ###
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -721,12 +704,100 @@ class TransformerBlock(torch.nn.Module):
             Output tensor of shape [batch, seq_len, hidden_dim].
         """
         ### TODO: Your code starts here ###
-        x_attention = self.group_query_attention(self.rms_norm_1(x))
+        x_attention = self.attention(self.rms_norm_1(x))
         x_attention += x
-        x_ffn = self.experts(self.rms_norm_2(x_attention))
+        x_ffn = self.ffn(self.rms_norm_2(x_attention))
         x_ffn += x_attention
         result = x_ffn
         ### TODO: Your code ends here ###
 
         assert x.shape == result.shape
         return result
+
+from torch.nn import Embedding
+
+class Transformer(torch.nn.Module):
+    def __init__(
+        self,
+        vocab_size: int,
+        n_layers: int,
+        hidden_dim: int,
+        ff_dim: int,
+        num_heads: int,
+        head_dim: int,
+        use_sliding_window_alternating: bool = False,
+        window_size: int = 128,
+        use_moe: bool = False,
+        num_experts: int = 8,
+        top_k: int = 2,
+        num_kv_heads: Optional[int] = None
+    ) -> None:
+        """
+        Args:
+            vocab_size: Size of the vocabulary.
+            n_layers: Number of transformer layers.
+            hidden_dim: Hidden dimension.
+            ff_dim: Feed-forward inner dimension.
+            num_heads: Number of attention heads.
+            head_dim: Dimension per attention head.
+            use_sliding_window_alternating: Use sliding window on every other layer
+            window_size: Size of sliding window.
+            use_moe: Whether to use Mixture of Experts.
+            num_experts: Number of experts (if MoE).
+            top_k: Number of experts per token (if MoE).
+            num_kv_heads: Number of KV heads for GQA.
+        """
+        super().__init__()
+
+        self.vocab_size = vocab_size
+        self.n_layers = n_layers
+        self.hidden_dim = hidden_dim
+        self.ff_dim = ff_dim
+        self.num_heads = num_heads
+        self.head_dim = head_dim
+
+        ### TODO: Your code starts here ###
+        self.embedding = Embedding(vocab_size, hidden_dim)
+        self.layers = torch.nn.ModuleList()
+
+        for i in range(n_layers):
+            use_sliding_window = use_sliding_window_alternating and (i % 2 == 1)
+
+            self.layers.append(
+                TransformerBlock(
+                    hidden_dim,
+                    ff_dim,
+                    num_heads,
+                    head_dim,
+                    use_sliding_window,
+                    window_size,
+                    use_moe,
+                    num_experts,
+                    top_k,
+                    num_kv_heads
+                )
+            )
+
+        self.final_norm = torch.nn.RMSNorm(hidden_dim)
+        self.output_proj = torch.nn.Linear(hidden_dim, vocab_size)
+        ### TODO: Your code ends here ###
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            x: Token indices of shape [batch, seq_len].
+
+        Returns:
+            Logits of shape [batch, seq_len, vocab_size].
+        """
+        assert len(x.shape) == 2, f"Expected 2D input, got shape {x.shape}"
+
+        ### TODO: Your code starts here ###
+        x = self.embedding(x)
+        for block in self.layers:
+            x = block(x)
+        x = self.final_norm(x)
+        logits = self.output_proj(x)
+        ### TODO: Your code ends here ###
+
+        return logits
