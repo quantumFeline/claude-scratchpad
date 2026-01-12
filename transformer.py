@@ -576,41 +576,6 @@ class Router(torch.nn.Module):
         self.top_k = top_k
 
         ### TODO: Your code starts here ###
-
-        ### TODO: Your code ends here ###
-
-    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        """
-        Args:
-            x: Input tensor of shape [batch, seq_len, hidden_dim].
-
-        Returns:
-            routing_weights: Tensor of shape [batch, seq_len, top_k] with softmax weights.
-            expert_indices: Tensor of shape [batch, seq_len, top_k] with selected expert indices.
-        """
-        assert len(x.shape) == 3
-        ### TODO: Your code starts here ###
-
-        ### TODO: Your code ends here ###
-
-        return routing_weights, expert_indices
-
-
-class Router(torch.nn.Module):
-    def __init__(self, hidden_dim: int, num_experts: int, top_k: int = 2) -> None:
-        """
-        Args:
-            hidden_dim: Input dimension.
-            num_experts: Total number of experts.
-            top_k: Number of experts to activate per token.
-        """
-        super().__init__()
-
-        self.hidden_dim = hidden_dim
-        self.num_experts = num_experts
-        self.top_k = top_k
-
-        ### TODO: Your code starts here ###
         self.layer_W_g = torch.nn.Linear(hidden_dim, num_experts)
         ### TODO: Your code ends here ###
 
