@@ -238,8 +238,8 @@ class GroupedQueryAttention(torch.nn.Module):
 
         ### TODO: Your code starts here ###
         self.layer_W_q = torch.nn.Linear(hidden_dim, num_heads * head_dim)
-        self.layer_W_k = torch.nn.Linear(hidden_dim, num_kv_heads * head_dim)
-        self.layer_W_v = torch.nn.Linear(hidden_dim, num_kv_heads * head_dim)
+        self.layer_W_k = torch.nn.Linear(hidden_dim, self.num_kv_heads * head_dim)
+        self.layer_W_v = torch.nn.Linear(hidden_dim, self.num_kv_heads * head_dim)
         self.layer_W_o = torch.nn.Linear(num_heads * head_dim, hidden_dim)
         self.key_weights = torch.nn.Parameter(torch.ones(num_heads))
         self.rope = RotaryPositionalEmbedding(head_dim)
