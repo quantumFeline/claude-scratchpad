@@ -164,12 +164,8 @@ def calculate_attention(
         Output tensor of shape [batch, num_heads, seq_len, head_dim].
     """
     ### TODO: Your code starts here ###
-    # print(f"q device: {q.device}")
-    # print(f"rope.cos_cache device: {rope.cos_cache.device}")
-    # print(f"rope.sin_cache device: {rope.sin_cache.device}")
     batch, num_heads, seq_len, head_dim = q.shape
     _, num_kv_heads, _, _ = k.shape
-    # print(q.shape, k.shape, v.shape)
     n_groups = num_heads // num_kv_heads
 
 
@@ -179,9 +175,6 @@ def calculate_attention(
     q_rope = rope(q)
     k_rope = rope(k_expanded) * key_weights.view(1, num_heads, 1, 1)
 
-    # print(k_rope.shape)
-    # print(k_rope.transpose(-2, -1).shape)
-    # print(q_rope.shape)
     attention = (q_rope @ k_rope.transpose(-2, -1)) * scale
 
     if mask is None:
@@ -191,15 +184,7 @@ def calculate_attention(
             .to(device)
     attention = attention.masked_fill(mask == 0, float('-inf'))
 
-
-    # print("Attention scores [0,0]:")
-    # print(attention[0, 0])
-    # print("Expected pattern should be lower triangular after masking")
-
     a_softmaxed = F.softmax(attention, dim=-1)
-
-    # print("Softmax weights [0,0]:")
-    # print(a_softmaxed[0, 0])
 
     output = a_softmaxed @ v_expanded
 
@@ -342,20 +327,6 @@ def test_calculate_attention() -> None:
           [-0.1522, -0.1901,  0.0176,  0.8908],
           [ 0.8761, -0.5560,  0.6310,  0.6123]]]]
     )
-
-    # DEBUG
-    # print("Actual output [0,0,0]:")
-    # print(output[0, 0, 0])
-    # print("Expected output [0,0,0]:")
-    # print(expected[0, 0, 0])
-    # print("Difference:")
-    # print(output[0, 0, 0] - expected[0, 0, 0])
-    # print("Max absolute difference:")
-    # print(torch.max(torch.abs(output - expected)))
-    # diff = torch.abs(output - expected)
-    # wrong_positions = torch.where(diff > 1e-4)
-    # print("Positions with large error:")
-    # print(wrong_positions)
 
     assert torch.allclose(output, expected, atol=1e-4), \
         f"calculate_attention output values mismatch"
@@ -1062,7 +1033,8 @@ TEST_LOADER = torch.utils.data.DataLoader(TEST_DATASET, batch_size=BATCH_SIZE)
 from tqdm import tqdm
 import functools
 
-@torch.no_grad
+
+@torch.no_grad()
 def eval_acc(model: torch.nn.Module, dataloader: torch.utils.data.DataLoader):
     model.eval()
     sum_acc = 0
@@ -1081,20 +1053,25 @@ def eval_acc(model: torch.nn.Module, dataloader: torch.utils.data.DataLoader):
 def eval_fn(step, model, dataloader):
     acc = eval_acc(model, dataloader)
     print(f"{step}: Avg eval accuracy {acc}")
+    return acc
 
 
 def train(
-    model: torch.nn.Module,
-    optimizer: torch.optim.Optimizer,
-    dataloader: torch.utils.data.DataLoader,
-    eval_fn: functools.partial,
-    num_epochs: int
+        model: torch.nn.Module,
+        optimizer: torch.optim.Optimizer,
+        dataloader: torch.utils.data.DataLoader,
+        eval_fn: functools.partial,
+        num_epochs: int
 ):
     model.train()
 
+    train_losses = []
+    eval_accuracies = []
+
     for epoch in range(num_epochs):
         if epoch == 0:
-            eval_fn(epoch, model)
+            current_eval_acc = eval_fn(epoch, model)
+            eval_accuracies.append(current_eval_acc.item())
 
         model.train()
         total_loss = 0.0
@@ -1107,9 +1084,17 @@ def train(
             loss = torch.nn.functional.cross_entropy(output.reshape(-1, output.shape[-1]), y.reshape(-1))
             loss.backward()
             optimizer.step()
+            total_loss += loss.item()
+            num_batches += 1
             ### TODO: Your code ends here ###
 
-        eval_fn(epoch, model)
+        avg_train_loss = total_loss / num_batches
+        train_losses.append(avg_train_loss)
+
+        current_eval_acc = eval_fn(epoch, model)
+        eval_accuracies.append(current_eval_acc.item())
+
+    return train_losses, eval_accuracies
 
 
 model = Transformer(
@@ -1117,7 +1102,8 @@ model = Transformer(
 )
 model.to(DEVICE)
 optimizer = torch.optim.AdamW(model.parameters(), lr=0.01)
-train(
+
+train_losses_history, eval_accuracies_history = train(
     model=model,
     optimizer=optimizer,
     dataloader=TRAIN_LOADER,
@@ -1127,3 +1113,272 @@ train(
     ),
     num_epochs=8
 )
+
+import matplotlib.pyplot as plt
+
+plt.figure(figsize=(12, 5))
+plt.subplot(1, 2, 1)
+plt.plot(train_losses_history, label='Training Loss', color='red')
+plt.xlabel('Epoch')
+plt.ylabel('Loss')
+plt.title('Training Loss per Epoch')
+plt.legend()
+plt.grid(True)
+
+# Plotting the evaluation accuracy
+plt.subplot(1, 2, 2)
+plt.plot(eval_accuracies_history, label='Evaluation Accuracy', color='blue')
+plt.xlabel('Epoch')
+plt.ylabel('Accuracy')
+plt.title('Evaluation Accuracy per Epoch')
+plt.legend()
+plt.grid(True)
+
+plt.tight_layout()
+plt.show()
+
+@torch.no_grad()
+def token_choice_greedy(model_logits: torch.Tensor) -> torch.Tensor:
+    """
+    Select the most likely token (greedy decoding).
+
+    Args:
+        model_logits: Logits of shape [batch, seq_len, vocab_size].
+
+    Returns:
+        Selected token indices of shape [batch, 1].
+    """
+    assert len(model_logits.shape) == 3
+    return torch.argmax(model_logits[:, -1:, :], dim=-1)
+
+
+@torch.no_grad()
+def generate(
+    model: torch.nn.Module,
+    input: torch.Tensor,
+    gen_length: int,
+    token_choice: Callable[[torch.Tensor], torch.Tensor] = token_choice_greedy
+) -> torch.Tensor:
+    """
+    Generate new tokens autoregressively.
+
+    Args:
+        model: The transformer model.
+        input: Initial token sequence of shape [batch, seq_len].
+        gen_length: Number of tokens to generate.
+        token_choice: Function to select next token from logits.
+
+    Returns:
+        Generated tokens of shape [batch, gen_length] (without the input).
+    """
+    assert len(input.shape) == 2
+    model.eval()
+
+    current_seq = input.to(DEVICE)
+    output_tokens = []
+
+    for _ in range(gen_length):
+        ### TODO: Your code starts here ###
+        model_out = model(current_seq)
+        next_token = token_choice(model_out)
+        output_tokens.append(next_token)
+        current_seq = torch.cat((current_seq, next_token), dim=-1)
+        ### TODO: Your code ends here ###
+
+    return torch.cat(output_tokens, dim=-1)
+
+
+print(generate(model, torch.tensor([[1]]), 100))
+
+
+@torch.no_grad()
+def get_dist_after_with_temp_and_topp(
+        model_logits: torch.Tensor, top_p: float, t: float
+) -> torch.Tensor:
+    assert len(model_logits.shape) == 3
+
+    ### TODO: Your code starts here ###
+    probs = torch.nn.functional.softmax(model_logits / t, dim=-1)
+    sorted_probs, prob_indices = torch.sort(probs, descending=True, dim=-1)
+    probs_cumulative = torch.cumsum(sorted_probs, dim=-1)
+    mask = probs_cumulative < top_p
+    mask[..., 1:] = mask[..., :-1].clone()
+    mask[..., 0] = True
+    probs_top_p = sorted_probs * mask
+
+    temp_result = torch.zeros_like(probs)
+    temp_result.scatter_(dim=-1, index=prob_indices, src=probs_top_p)
+
+    result = temp_result / (torch.sum(temp_result, dim=-1, keepdim=True) + 1e-6)
+    return result
+    ### TODO: Your code ends here ###
+
+
+@torch.no_grad()
+def token_choice_adv(
+        model_logits: torch.Tensor, top_p: float, t: float
+) -> torch.Tensor:
+    probs = get_dist_after_with_temp_and_topp(
+        model_logits=model_logits[:, -1:, :], top_p=top_p, t=t
+    )
+    dist = torch.distributions.Categorical(probs=probs)
+    return dist.sample()
+
+
+##### TESTS START #####
+@torch.no_grad()
+def test_nucleus() -> None:
+    def test_dist_topp() -> None:
+        res = get_dist_after_with_temp_and_topp(
+            torch.tensor([[[1.0, 1.0, 1.0]]]), top_p=1.0, t=1.0
+        )
+        assert torch.abs(res - torch.tensor([1 / 3, 1 / 3, 1 / 3])).sum() <= 1e-4
+
+        res = get_dist_after_with_temp_and_topp(
+            torch.tensor([[[2.0, 3.0, 1.0]]]), top_p=0.0, t=1.0
+        )
+
+        assert torch.abs(res - torch.tensor([0.0, 1.0, 0.0])).sum() <= 1e-4
+
+        res = get_dist_after_with_temp_and_topp(
+            torch.tensor([[[2.0, 3.0, 1.0]]]), top_p=0.6, t=1.0
+        )
+        assert torch.abs(res - torch.tensor([0.0, 1.0, 0.0])).sum() <= 1e-4
+
+        res = get_dist_after_with_temp_and_topp(
+            torch.tensor([[[1.0, 3.0, 2.0]]]), top_p=0.71, t=1.0
+        )
+        assert torch.abs(res - torch.tensor([0.0, 0.7311, 0.2689])).sum() <= 1e-2
+
+        res = get_dist_after_with_temp_and_topp(
+            torch.tensor([[[1.0, 3.0, 2.0]]]), top_p=1.0, t=1.0
+        )
+        assert torch.abs(res - torch.tensor([0.0900, 0.6652, 0.2447])).sum() <= 1e-2
+
+    def test_temperature() -> None:
+        res = get_dist_after_with_temp_and_topp(
+            torch.tensor([[[1.0, 1.0, 1.0]]]), top_p=1.0, t=3.0
+        )
+        assert torch.abs(res - torch.tensor([1 / 3, 1 / 3, 1 / 3])).sum() <= 1e-4
+
+        res = get_dist_after_with_temp_and_topp(
+            torch.tensor([[[1.0, 3.0, 2.0]]]), top_p=1.0, t=3.0
+        )
+        assert torch.abs(res - torch.tensor([0.2302, 0.4484, 0.3213])).sum() <= 1e-2
+
+        res = get_dist_after_with_temp_and_topp(
+            torch.tensor([[[1.0, 3.0, 2.0]]]), top_p=1.0, t=1 / 3
+        )
+        assert torch.abs(res - torch.tensor([0.0024, 0.9503, 0.0473])).sum() <= 1e-2
+
+        res = get_dist_after_with_temp_and_topp(
+            torch.tensor([[[1.0, 3.0, 2.0]]]), top_p=0.94, t=1 / 3
+        )
+        assert torch.abs(res - torch.tensor([0.0, 1.0, 0.0])).sum() <= 1e-4
+
+    def test_batching() -> None:
+        res = get_dist_after_with_temp_and_topp(
+            torch.tensor([
+                [[1.0, 3.0, 2.0], [1.0, 4.0, 8.0]],
+                [[8.0, 4.0, 1.0], [3.0, 1.0, 2.0]]
+            ]),
+            top_p=0.7,
+            t=1.0,
+        )
+        expected = torch.tensor([
+            [[0.0, 0.7311, 0.2689], [0.0, 0.0, 1.0]],
+            [[1.0, 0.0, 0.0], [0.7311, 0.0, 0.2689]],
+        ])
+        assert torch.abs(res - expected).sum() <= 1e-2
+
+    test_dist_topp()
+    test_temperature()
+    test_batching()
+
+
+test_nucleus()
+
+#####  TESTS END  #####
+
+input_data = torch.ones((1, SEQ_LEN-10), dtype=int) * 2
+print(generate(model=model, input=input_data, gen_length=SEQ_LEN - input_data.shape[-1], token_choice=functools.partial(token_choice_adv, top_p=0.5, t=0.7)))
+
+def sequence_entropy(sequences):
+    """Calculate entropy for each sequence."""
+    entropies = []
+    for seq in sequences:
+        counts = torch.bincount(seq, minlength=8)[1:]  # classes 1-7, skip 0
+        probs = counts.float() / counts.sum()
+        probs = probs[probs > 0]
+        entropy = -(probs * torch.log(probs)).sum()
+        entropies.append(entropy)
+    return torch.tensor(entropies)
+
+entropies = []
+temps = torch.linspace(1e-6, 10, 20)
+
+num_generations = 100
+batched_input_data = torch.ones((num_generations, SEQ_LEN - input_data.shape[-1]), dtype=int) * 2
+
+for t in tqdm(temps):
+    generated_sequences = generate(
+        model=model,
+        input=batched_input_data,
+        gen_length=SEQ_LEN - batched_input_data.shape[-1],
+        token_choice=functools.partial(token_choice_adv, top_p=0.5, t=t)
+    )
+    seq_entropies = sequence_entropy(generated_sequences)
+    mean_entropy = seq_entropies.mean()
+    entropies.append(mean_entropy)
+
+plt.plot(temps, entropies)
+plt.xlabel("Temperature")
+plt.ylabel("Entropy")
+plt.title("Entropy of Generated Sequences")
+
+import matplotlib.pyplot as plt
+
+
+@torch.no_grad()
+def calc_per_token_acc(
+        model: torch.nn.Module, data_loader: torch.utils.data.DataLoader
+) -> np.ndarray:
+    """
+    Calculate accuracy for each position in the sequence.
+
+    Args:
+        model: The transformer model.
+        data_loader: Data loader with (x, y) pairs.
+
+    Returns:
+        Array of shape [seq_len] with accuracy at each position.
+    """
+    model.eval()
+
+    ### TODO: Your code starts here ###
+    seq_len = SEQ_LEN
+
+    per_token_correct = torch.zeros((seq_len,))
+    per_token_total = 0
+
+    for x, y in tqdm(data_loader):
+        x, y = x.to(DEVICE), y.to(DEVICE)
+        output = model(x)
+
+        per_token_correct += (torch.argmax(output, dim=-1) == y).to(torch.float32).sum(dim=0)
+        per_token_total += x.shape[0]
+
+    per_token_acc = per_token_correct / per_token_total
+
+    ### TODO: Your code ends here ###
+    return per_token_acc
+
+
+per_token_acc = calc_per_token_acc(model, TEST_LOADER)
+plt.figure(figsize=(10, 5))
+plt.plot(np.arange(per_token_acc.shape[0]), per_token_acc)
+plt.xlabel("Position in sequence")
+plt.ylabel("Accuracy")
+plt.title("Per-Position Prediction Accuracy")
+plt.grid(True, alpha=0.3)
+plt.show()
