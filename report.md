@@ -1,6 +1,8 @@
 DNN 3: Transformer GPT-OSB-20B
 ===
 
+[Notebook](https://colab.research.google.com/drive/1R685GZibQgbMbeb3-ieoIOaONSE4Ixpx?usp=sharing) (but Python file is a little cleaner as it doesn't include problem statements and debug outputs, and may be easier to navigate)
+
 In this lab, we implement the GPT-OSS Transformer toy model and apply it to a toy example.
 
 **Implementation**
